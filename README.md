@@ -5,7 +5,7 @@ This is the repo for spring 2022 cs118 project 2.
 ## Makefile
 
 This provides a couple make targets for things.
-By default (all target), it makes the `server` executables.
+By default (all target), it makes the `server` and `client` executables.
 
 It provides a `clean` target, and `tarball` target to create the submission file as well.
 
