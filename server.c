@@ -193,20 +193,56 @@ int main (int argc, char *argv[])
         //       without handling data loss.
         //       Only for demo purpose. DO NOT USE IT in your final submission
         struct packet recvpkt;
+        unsigned short expectedSeqNum = synackpkt.acknum;
 
         while(1) {
             n = recvfrom(sockfd, &recvpkt, PKT_SIZE, 0, (struct sockaddr *) &cliaddr, (socklen_t *) &cliaddrlen);
+            
             if (n > 0) {
-                printRecv(&recvpkt);
+                // Set expected to old ACK plus packet size
+                unsigned short holder = expectedSeqNum;
+                expectedSeqNum = (expectedSeqNum + recvpkt.length) % MAX_SEQN;
 
                 if (recvpkt.fin) {
+                    // Print reception
+                    printRecv(&recvpkt);
+                    
+                    // Package is a FIN package, process it
                     cliSeqNum = (cliSeqNum + 1) % MAX_SEQN;
 
+                    // Build and send FIN package
                     buildPkt(&ackpkt, seqNum, cliSeqNum, 0, 0, 1, 0, 0, NULL);
                     printSend(&ackpkt, 0);
                     sendto(sockfd, &ackpkt, PKT_SIZE, 0, (struct sockaddr*) &cliaddr, cliaddrlen);
 
+                    // Exit reading process
                     break;
+
+                } else if (recvpkt.seqnum != expectedSeqNum) {
+                    // Check if sequence number matches expected
+                    expectedSeqNum = holder;
+                    continue;
+
+                } else {
+                    // Print reception
+                    printRecv(&recvpkt);
+                    
+                    // Package is a payload package, process it
+                    int length = snprintf(NULL, 0, "%d", i) + 6;
+                    char* filename = malloc(length);
+                    snprintf(filename, length, "%d.file", i);
+
+                    // Write package to file
+                    fwrite(recvpkt.payload, 1, recvpkt.length, fp);
+
+                    // Form sequence number
+                    seqNum = recvpkt.acknum;
+                    cliSeqNum = (recvpkt.seqnum + recvpkt.length) % MAX_SEQN;
+
+                    // Build and send ACK for payload package received
+                    buildPkt(&ackpkt, seqNum, cliSeqNum, 0, 0, 1, 0, 0, NULL);
+                    printSend(&ackpkt, 0);
+                    sendto(sockfd, &ackpkt, PKT_SIZE, 0, (struct sockaddr*) &cliaddr, cliaddrlen);
                 }
             }
         }

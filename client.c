@@ -208,15 +208,77 @@ int main (int argc, char *argv[])
     //       single data packet, and then tears down the connection without
     //       handling data loss.
     //       Only for demo purpose. DO NOT USE IT in your final submission
+    int first = 1;
+    int ack_count = 0;
+    int send_count = 0;
+    int nextAckExpected = 0;
     while (1) {
-        n = recvfrom(sockfd, &ackpkt, PKT_SIZE, 0, (struct sockaddr *) &servaddr, (socklen_t *) &servaddrlen);
-        if (n > 0) {
-            break;
+        // Wait for ACK from server
+        while (1) {
+            // Read in ACK
+            n = recvfrom(sockfd, &ackpkt, PKT_SIZE, 0, (struct sockaddr *) &servaddr, (socklen_t *) &servaddrlen);
+            if (n > 0) {
+                if (!first) {
+                    ack_count--;
+                    printRecv(&ackpkt);
+                }
+                available++;
+                nextAckExpected++;
+                if (nextAckExpected == WND_SIZE) nextAckExpected = 0;
+                break;
+            }
+            else if (isTimeout(timer)) {
+                int i = nextAckExpected;
+                printTimeout(&pkts[i]); // Print timeout for ACK that was expected
+                int resend_count = 0;
+                while (resend_count != (WND_SIZE - available)) { // Resend all packages in window
+                    printSend(&pkts[i], 1);
+                    sendto(sockfd, &pkts[i], PKT_SIZE, 0, (struct sockaddr*) &servaddr, servaddrlen);
+                    i++;
+                    if (i >= WND_SIZE) i = 0;
+                    resend_count++;
+                }
+                timer = setTimer();
+            }
         }
-    }
 
-    // *** End of your client implementation ***
-    fclose(fp);
+        // While the window isn't full, fill each buffer with a newly created package
+        while (available > 0) {            
+            // Read from file
+            m = fread(buf, 1, PAYLOAD_SIZE, fp); // Read next packet
+            if (m <= 0) break; // Break if nothing to read
+
+            // Build and send packet
+            seqNum += m;
+            buildPkt(&pkts[e], seqNum, (ackpkt.seqnum) % MAX_SEQN, 0, 0, 0, 0, m, buf); // Send packet
+            ack_count++;
+            send_count++;
+
+            e++; // Increment first empty slot
+            if (e == WND_SIZE) e = 0; // Wrap around to 0 if e is 10 (out of buffer bounds)
+
+            available--; // Decrement number of available slots
+        }
+
+        // Send all packages created
+        while (send_count > 0) {
+            printSend(&pkts[s], 0);
+            sendto(sockfd, &pkts[s], PKT_SIZE, 0, (struct sockaddr*) &servaddr, servaddrlen);
+            buildPkt(&pkts[s], (pkts[s].seqnum % MAX_SEQN), (pkts[s].acknum % MAX_SEQN), 0, 0, 0, 1, pkts[s].length, pkts[s].payload); // Build a duplicate to resend if loss occurs
+            s++;
+            if (s == WND_SIZE) s = 0;
+            send_count--;
+        }
+
+        // Check if done reading and done processing ACKs, and if so, leave loop
+        if (m <= 0 && ack_count == 0) break;
+
+        // Not first loop anymore, change first to false
+        if (first) first = 0;
+
+        // Set timer after last package sent
+        timer = setTimer();
+    }
 
     // =====================================
     // Connection Teardown: This procedure is provided to you directly and is
